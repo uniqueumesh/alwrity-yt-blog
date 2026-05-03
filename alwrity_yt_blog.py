@@ -294,7 +294,18 @@ def summarize_youtube_video(yt_transcript, gemini_api_key: str):
         return None
 
 def generate_text_with_exception_handling(prompt, gemini_api_key: str):
-    """Generate text using Gemini AI with proper error handling"""
+    """
+    Generate text using Gemini 2.5 series AI with robust error handling, retries, and model fallback.
+    
+    Fallback Behavior:
+    1. Primary: gemini-2.5-flash-lite (optimized for speed and efficiency)
+    2. Secondary: gemini-2.5-flash (balanced intelligence and speed)
+    3. Tertiary: gemini-2.5-pro (maximum reasoning and content quality)
+    
+    Transient Reliability:
+    - Includes up to 2 retries for transient model overload (429) or connection issues.
+    - Automatically falls back to the next model in the 2.5 series if one fails or returns blocked content.
+    """
     api_key = gemini_api_key
     if not api_key:
         st.error("Gemini API key not set. Please set it in the API Keys section.")
@@ -316,28 +327,52 @@ def generate_text_with_exception_handling(prompt, gemini_api_key: str):
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
         ]
         
-        # Try to use gemini-1.5-flash, fall back to gemini-1.0-pro if not available
-        try:
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-        except Exception as e:
-            st.warning(f"Could not use gemini-1.5-flash: {str(e)}. Falling back to gemini-1.0-pro.")
-            model = genai.GenerativeModel(
-                model_name="gemini-1.0-pro",
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-            
-        with st.spinner("Generating blog content with AI..."):
-            convo = model.start_chat(history=[])
-            response = convo.send_message(prompt)
-            return response.text
+        # Strictly Gemini 2.5 series models as requested
+        models_to_try = [
+            "gemini-2.5-flash-lite", 
+            "gemini-2.5-flash", 
+            "gemini-2.5-pro"
+        ]
+        
+        for model_name in models_to_try:
+            max_retries = 2
+            for attempt in range(max_retries + 1):
+                try:
+                    model = genai.GenerativeModel(
+                        model_name=model_name,
+                        generation_config=generation_config,
+                        safety_settings=safety_settings
+                    )
+                    
+                    with st.spinner(f"Generating content with {model_name}..."):
+                        response = model.generate_content(prompt)
+                        try:
+                            if response.text:
+                                return response.text
+                        except (ValueError, AttributeError):
+                            st.warning(f"Response from {model_name} was blocked or empty. Trying next model...")
+                            break # Move to next model in the 2.5 series
+                            
+                except Exception as e:
+                    error_msg = str(e)
+                    # Handle transient errors like 429 (overload) with retries
+                    if "429" in error_msg or "overloaded" in error_msg.lower():
+                        if attempt < max_retries:
+                            time.sleep(2) # Brief retry delay for transient overload
+                            continue
+                    
+                    # If it's the last model in our 2.5 list and all retries failed
+                    if model_name == models_to_try[-1] and attempt == max_retries:
+                        raise e
+                    
+                    # Log failure for this specific 2.5 model and try the next one
+                    st.warning(f"Model {model_name} failed: {error_msg}. Trying next 2.5 model...")
+                    break # Move to next model
+                    
+        return None
             
     except Exception as e:
-        st.error(f"Error generating text with Gemini: {str(e)}")
+        st.error(f"Error generating text with Gemini 2.5: {str(e)}")
         return None
 
 def add_custom_css():
