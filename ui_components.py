@@ -66,7 +66,7 @@ def create_footer():
         <h4 style="margin-bottom: 1rem; color: white;">🚀 Alwrity - AI Content Generator</h4>
         <p style="margin-bottom: 1rem; opacity: 0.9;">Transform your YouTube content into engaging blog posts with the power of AI</p>
         <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.2);">
-            <small>Made with ❤️ using Streamlit • Powered by AssemblyAI & Google Gemini</small>
+            <small>Made with ❤️ by ALwrity team • Powered by AssemblyAI & Google Gemini</small>
         </div>
     </div>
     """, unsafe_allow_html=True)

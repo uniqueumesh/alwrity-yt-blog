@@ -25,7 +25,8 @@ def get_youtube_transcript(yt_url, assemblyai_api_key: str):
         
     base_url = "https://api.assemblyai.com"
     headers = {"authorization": ASSEMBLYAI_API_KEY, "content-type": "application/json"}
-    temp_audio = 'temp_audio.mp4'
+    # Use absolute path for cloud reliability
+    temp_audio = os.path.join(os.getcwd(), 'temp_audio.mp4')
     
     try:
         if not yt_url:
@@ -81,7 +82,7 @@ def get_youtube_transcript(yt_url, assemblyai_api_key: str):
                         continue
                 
                 if not audio_stream:
-                    st.error("Sorry, couldn't find any suitable stream for this video.")
+                    st.error("YouTube blocked the download or no audio stream found. This is common on cloud hosting.")
                     return None
                     
                 try:
