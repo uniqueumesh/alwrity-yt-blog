@@ -1,5 +1,6 @@
 streamlit
 requests
-pytubefix
+yt-dlp
 google-genai
 python-dotenv
+static-ffmpeg

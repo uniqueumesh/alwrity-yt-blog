@@ -3,7 +3,19 @@ import time
 import requests
 import streamlit as st
 import re
-from pytubefix import YouTube
+import yt_dlp
+# Global variable to store ffmpeg path
+FFMPEG_PATH = None
+
+try:
+    from static_ffmpeg import add_paths as ffmpeg_add_paths
+    import static_ffmpeg.run as ffmpeg_run
+    # This adds FFmpeg to the system path
+    ffmpeg_add_paths()
+    # Get the actual folder path where ffmpeg is located
+    FFMPEG_PATH = os.path.dirname(ffmpeg_run.get_platform_executables_root())
+except Exception:
+    pass
 
 def extract_video_id(url):
     """Extract YouTube video ID from various URL formats"""
@@ -25,8 +37,9 @@ def get_youtube_transcript(yt_url, assemblyai_api_key: str):
         
     base_url = "https://api.assemblyai.com"
     headers = {"authorization": ASSEMBLYAI_API_KEY, "content-type": "application/json"}
-    # Use absolute path for cloud reliability
-    temp_audio = os.path.join(os.getcwd(), 'temp_audio.mp4')
+    # Use absolute path for cloud reliability, yt-dlp will handle the extension
+    temp_audio_base = os.path.join(os.getcwd(), 'temp_audio')
+    temp_audio_mp3 = f"{temp_audio_base}.mp3"
     
     try:
         if not yt_url:
@@ -41,69 +54,62 @@ def get_youtube_transcript(yt_url, assemblyai_api_key: str):
         clean_url = f"https://www.youtube.com/watch?v={video_id}"
             
         with st.status("Processing YouTube video...") as status:
-            status.update(label="Downloading audio from YouTube...")
+            status.update(label="Downloading audio from YouTube using yt-dlp...")
+            
+            # yt-dlp options for high quality and bypassing bot detection
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'outtmpl': temp_audio_base + '.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }
+            
+            # Explicitly tell yt-dlp where ffmpeg is located (Fix for Windows)
+            if FFMPEG_PATH:
+                ydl_opts['ffmpeg_location'] = FFMPEG_PATH
+
             try:
-                try:
-                    yt = YouTube(clean_url, use_oauth=False, allow_oauth_cache=True)
-                except Exception:
-                    yt = YouTube(clean_url)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(clean_url, download=True)
+                    video_title = info.get('title', 'Unknown Title')
+                    video_length = info.get('duration', 0)
+                    
+                    if video_title != "Unknown Title":
+                        st.info(f"📹 Video: {video_title} ({video_length//60}:{video_length%60:02d})")
                 
-                try:
-                    video_title = yt.title
-                    video_length = yt.length
-                except Exception as e:
-                    st.warning(f"Could not get video metadata: {str(e)}. Continuing anyway...")
-                    video_title = "Unknown Title"
-                    video_length = 0
-                
-                if video_length > 1800:
-                    st.warning(f"⚠️ Video is {video_length//60} minutes long. Processing may take a while.")
-                
-                if video_title != "Unknown Title":
-                    st.info(f"📹 Video: {video_title} ({video_length//60}:{video_length%60:02d})")
-                
-                audio_stream = None
-                stream_attempts = [
-                    lambda: yt.streams.filter(only_audio=True, file_extension='mp4').first(),
-                    lambda: yt.streams.filter(only_audio=True, file_extension='webm').first(),
-                    lambda: yt.streams.filter(only_audio=True).first(),
-                    lambda: yt.streams.filter(progressive=True).first(),
-                    lambda: yt.streams.first()
-                ]
-                
-                for attempt in stream_attempts:
-                    try:
-                        audio_stream = attempt()
-                        if audio_stream:
-                            if hasattr(audio_stream, 'subtype') and audio_stream.subtype:
-                                temp_audio = f'temp_audio.{audio_stream.subtype}'
-                            break
-                    except Exception:
-                        continue
-                
-                if not audio_stream:
-                    st.error("YouTube blocked the download or no audio stream found. This is common on cloud hosting.")
+                # Verify the download
+                if not os.path.exists(temp_audio_mp3):
+                    st.error("Audio file was not downloaded correctly by yt-dlp.")
                     return None
                     
-                try:
-                    audio_stream.download(filename=temp_audio, timeout=60)
-                except Exception:
-                    try:
-                        audio_stream.download(output_path=".", filename=temp_audio)
-                    except Exception as alt_error:
-                        st.error(f"Download failed: {str(alt_error)}")
-                        return None
-                
-                if not os.path.exists(temp_audio) or os.path.getsize(temp_audio) < 1000:
-                    st.error("Audio download failed or file is invalid.")
-                    if os.path.exists(temp_audio): os.remove(temp_audio)
+                if os.path.getsize(temp_audio_mp3) < 1000:  # Less than 1KB
+                    st.error("Downloaded audio file is too small to be valid.")
+                    if os.path.exists(temp_audio_mp3): os.remove(temp_audio_mp3)
                     return None
                     
-                status.update(label="Uploading to AssemblyAI...")
-                with open(temp_audio, "rb") as f:
-                    response = requests.post(f"{base_url}/v2/upload", headers={"authorization": ASSEMBLYAI_API_KEY}, data=f)
-                
-                if os.path.exists(temp_audio): os.remove(temp_audio)
+                status.update(label="Uploading audio to transcription service...")
+                # Upload audio file to AssemblyAI
+                try:
+                    with open(temp_audio_mp3, "rb") as f:
+                        response = requests.post(
+                            f"{base_url}/v2/upload",
+                            headers={"authorization": ASSEMBLYAI_API_KEY},
+                            data=f
+                        )
+                except Exception as upload_error:
+                    st.error(f"Error uploading to AssemblyAI: {str(upload_error)}")
+                    if os.path.exists(temp_audio_mp3): os.remove(temp_audio_mp3)
+                    return None
+                    
+                # Clean up temp file immediately after upload
+                if os.path.exists(temp_audio_mp3):
+                    os.remove(temp_audio_mp3)
                     
                 if response.status_code != 200:
                     st.error(f"Upload error: {response.text}")
