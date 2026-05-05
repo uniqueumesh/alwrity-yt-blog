@@ -1,5 +1,6 @@
 import time
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import streamlit as st
 
 def summarize_youtube_video(yt_transcript, gemini_api_key: str):
@@ -54,20 +55,18 @@ def generate_text_with_exception_handling(prompt, gemini_api_key: str):
         return None
         
     try:
-        genai.configure(api_key=api_key)
+        client = genai.Client(api_key=api_key)
         
-        generation_config = {
-            "temperature": 0.7,
-            "top_k": 0,
-            "max_output_tokens": 4096,
-        }
-        
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
+        config = types.GenerateContentConfig(
+            temperature=0.7,
+            max_output_tokens=4096,
+            safety_settings=[
+                types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_MEDIUM_AND_ABOVE'),
+                types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_MEDIUM_AND_ABOVE'),
+                types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_MEDIUM_AND_ABOVE'),
+                types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_MEDIUM_AND_ABOVE'),
+            ]
+        )
         
         models_to_try = [
             "gemini-2.5-flash-lite", 
@@ -79,20 +78,15 @@ def generate_text_with_exception_handling(prompt, gemini_api_key: str):
             max_retries = 2
             for attempt in range(max_retries + 1):
                 try:
-                    model = genai.GenerativeModel(
-                        model_name=model_name,
-                        generation_config=generation_config,
-                        safety_settings=safety_settings
-                    )
-                    
                     with st.spinner(f"Generating content with {model_name}..."):
-                        response = model.generate_content(prompt)
-                        try:
-                            if response.text:
-                                return response.text
-                        except (ValueError, AttributeError):
-                            st.warning(f"Response from {model_name} was blocked or empty. Trying next model...")
-                            break
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=config
+                        )
+                        
+                        if response.text:
+                            return response.text
                             
                 except Exception as e:
                     error_msg = str(e)
