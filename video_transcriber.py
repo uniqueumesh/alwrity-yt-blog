@@ -4,18 +4,29 @@ import requests
 import streamlit as st
 import re
 import yt_dlp
+import shutil
+
 # Global variable to store ffmpeg path
 FFMPEG_PATH = None
 
-try:
-    from static_ffmpeg import add_paths as ffmpeg_add_paths
-    import static_ffmpeg.run as ffmpeg_run
-    # This adds FFmpeg to the system path
-    ffmpeg_add_paths()
-    # Get the actual folder path where ffmpeg is located
-    FFMPEG_PATH = os.path.dirname(ffmpeg_run.get_platform_executables_root())
-except Exception:
-    pass
+def get_ffmpeg_path():
+    """Smart Search for FFmpeg: Checks system first, then local static-ffmpeg"""
+    # 1. Check if 'ffmpeg' is already in the system PATH (Standard for Cloud)
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return os.path.dirname(system_ffmpeg)
+    
+    # 2. If not found, try to use static-ffmpeg (Standard for local Windows)
+    try:
+        from static_ffmpeg import add_paths as ffmpeg_add_paths
+        import static_ffmpeg.run as ffmpeg_run
+        ffmpeg_add_paths()
+        return os.path.dirname(ffmpeg_run.get_platform_executables_root())
+    except Exception:
+        return None
+
+# Initialize the smart search
+FFMPEG_PATH = get_ffmpeg_path()
 
 def extract_video_id(url):
     """Extract YouTube video ID from various URL formats"""
